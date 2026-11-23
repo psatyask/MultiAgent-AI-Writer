@@ -1,0 +1,26 @@
+
+# LangGraph & LangChain
+langgraph==1.2.24
+langchain==1.5.2
+langchain-groq==1.2.1
+langchain-ollama==1.2.0
+langchain-google-genai==4.5.2
+google-genai
+langchain_openai
+langchain-community==0.4.2
+langchain-tavily==0.2.18
+
+# PostgreSQL & Checkpointing
+psycopg[binary]==3.3.9
+psycopg_pool==3.3.3
+langgraph-checkpoint-postgres==3.2.1
+
+# Environment & API
+python-dotenv==1.2.4
+tavily-python==0.8.5
+requests==2.34.2
+
+# FastAPI & Web
+fastapi==0.165.0
+uvicorn==0.54.0
+jinja2==3.1.6
