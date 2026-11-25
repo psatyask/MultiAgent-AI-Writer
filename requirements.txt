@@ -6,7 +6,7 @@ langchain-groq==1.2.1
 langchain-ollama==1.2.0
 langchain-google-genai==4.5.2
 google-genai
-langchain_openai
+langchain-openai
 langchain-community==0.4.2
 langchain-tavily==0.2.18
 
