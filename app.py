@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import io
 import json
 import logging
+import re
 import uuid
+import zipfile
 from datetime import date
 from pathlib import Path
 from typing import Any, Generator
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -51,7 +54,7 @@ logger = logging.getLogger("langgraph-fastapi")
 # FastAPI application
 # ---------------------------------------------------------
 app = FastAPI(
-    title="LangGraph Blog Agent",
+    title="MultiAgent-AI-Writer",
     description="FastAPI frontend for the existing LangGraph workflow.",
     version="1.0.0",
 )
@@ -188,6 +191,24 @@ def save_final_markdown(run_id: str, markdown: str) -> Path:
     output_file.write_text(markdown, encoding="utf-8")
 
     return output_file
+
+
+def collect_image_files(markdown: str) -> list[Path]:
+    """Return existing image files referenced as images/<name> in the markdown."""
+
+    files: list[Path] = []
+    seen: set[str] = set()
+
+    for name in re.findall(r"!\[[^\]]*\]\(\s*images/([^)\s]+)\s*\)", markdown):
+        safe_name = Path(name).name
+        if safe_name in seen:
+            continue
+        candidate = IMAGES_DIR / safe_name
+        if candidate.is_file() and candidate.stat().st_size > 0:
+            seen.add(safe_name)
+            files.append(candidate)
+
+    return files
 
 
 # ---------------------------------------------------------
@@ -498,12 +519,16 @@ def stream_workflow(topic: str, run_id: str) -> Generator[str, None, None]:
                 }
             )
 
+        image_count = len(collect_image_files(final_markdown))
+
         yield create_sse_event(
             {
                 "type": "final",
                 "run_id": run_id,
                 "markdown": final_markdown,
                 "download_url": f"/api/runs/{run_id}/download",
+                "images_url": f"/api/runs/{run_id}/images" if image_count else None,
+                "image_count": image_count,
             }
         )
 
@@ -533,7 +558,7 @@ def home(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="index.html",
-        context={"page_title": "LangGraph Agent Writer"},
+        context={"page_title": "MultiAgent-AI-Writer"},
     )
 
 
@@ -592,6 +617,41 @@ def download_markdown(run_id: str):
         path=output_file,
         media_type="text/markdown",
         filename=f"generated-blog-{safe_run_id[:8]}.md",
+    )
+
+
+# ---------------------------------------------------------
+# Image download endpoint
+# ---------------------------------------------------------
+@app.get("/api/runs/{run_id}/images")
+def download_images(run_id: str):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise HTTPException(status_code=400, detail="Invalid run ID.")
+
+    markdown_file = OUTPUTS_DIR / run_id / "blog.md"
+
+    if not markdown_file.is_file():
+        raise HTTPException(status_code=404, detail="Run was not found.")
+
+    images = collect_image_files(markdown_file.read_text(encoding="utf-8"))
+
+    if not images:
+        raise HTTPException(status_code=404, detail="No generated images were found.")
+
+    if len(images) == 1:
+        return FileResponse(path=images[0], filename=images[0].name)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        for image in images:
+            archive.write(image, arcname=image.name)
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="images-{run_id[:8]}.zip"'
+        },
     )
 
 
