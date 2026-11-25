@@ -1,5 +1,6 @@
 from pathlib import Path
 from datetime import date
+import hashlib
 import operator
 import os
 import re
@@ -25,6 +26,14 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 load_dotenv()  # Load environment variables from .env file
+
+# Anchor output folders to this file, not to the current working directory,
+# so app.py serves exactly the folder this file writes to.
+BASE_DIR = Path(__file__).resolve().parent
+IMAGES_DIR = BASE_DIR / "images"
+OUTPUTS_DIR = BASE_DIR / "outputs"
+IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
 image_llm = ChatGoogleGenerativeAI(
     model="gemini-3.1-flash-image",
@@ -604,7 +613,7 @@ def generate_and_place_images(state: State) -> dict:
 
     md = state.get("md_with_placeholders") or state["merged_md"]
     image_specs = state.get("image_specs", []) or []
-    md_name = f"{_safe_name(plan.blog_title)}.md"
+    md_name = OUTPUTS_DIR / f"{_safe_name(plan.blog_title)}.md"
 
     print(f"image_specs: {len(image_specs)} requested")
 
@@ -613,15 +622,20 @@ def generate_and_place_images(state: State) -> dict:
         Path(md_name).write_text(md, encoding="utf-8")
         return {"final": md}
 
-    images_dir = Path("images").resolve()
+    images_dir = IMAGES_DIR
     images_dir.mkdir(parents=True, exist_ok=True)
     print("saving images to:", images_dir)
 
     for spec in image_specs:
         placeholder = spec["placeholder"]
-        filename = _safe_name(spec["filename"], default="image.png")
-        if not filename.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            filename += ".png"
+        # Add a short hash of the prompt so two different blogs never reuse the same
+        # file name (the LLM often picks names like diagram_1.png). The same prompt
+        # still maps to the same file, so the "already generated" cache keeps working.
+        raw_name = re.sub(r"\s+", "_", _safe_name(spec["filename"], default="image.png"))
+        raw_path = Path(raw_name)
+        ext = raw_path.suffix.lower() if raw_path.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") else ".png"
+        digest = hashlib.sha1(spec["prompt"].encode("utf-8")).hexdigest()[:8]
+        filename = f"{raw_path.stem}_{digest}{ext}"
         out_path = images_dir / filename
 
         if placeholder not in md:
